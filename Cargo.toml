@@ -1,0 +1,11 @@
+[package]
+name = "codigo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "0.28"
+nalgebra-glm = "0.19"
+tobj = "3.0"  # Asegúrate de estar usando una versión actual
+pixels = "0.8"      # Agrega esta línea para la biblioteca pixels
+winit = "0.26"      # Necesaria para manejar ventanas junto con pixels
