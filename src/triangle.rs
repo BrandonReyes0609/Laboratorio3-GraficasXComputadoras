@@ -2,8 +2,7 @@ use crate::fragment::Fragment;
 use crate::vertex::Vertex;
 use crate::color::Color;
 use nalgebra_glm::Vec3;
-use crate::calculate_bounding_box;
-use crate::barycentric_coordinates;
+use crate::utils::{calculate_bounding_box, barycentric_coordinates};
 
 pub fn triangle(v1: &Vertex, v2: &Vertex, v3: &Vertex) -> Vec<Fragment> {
     let mut fragments = Vec::new();
@@ -11,18 +10,21 @@ pub fn triangle(v1: &Vertex, v2: &Vertex, v3: &Vertex) -> Vec<Fragment> {
 
     let (min_x, min_y, max_x, max_y) = calculate_bounding_box(&a, &b, &c);
 
-    // Dirección de la fuente de luz estática
+    // Dirección de la fuente de luz
     let light_dir = Vec3::new(0.0, 0.0, -1.0);
 
     // Normal del triángulo para flat shading
-    let normal = v1.transformed_normal.normalize();
+    let normal = (b - a).cross(&(c - a)).normalize();
 
     // Calcula la intensidad de la luz usando el producto punto
     let intensity = normal.dot(&light_dir).max(0.0);
 
-    // Color base con iluminación
-    let base_color = Color { r: 0.8, g: 0.8, b: 0.8 }; // Gris claro
-    let lit_color = Color { r: 0.8, g: 0.8, b: 0.8 }; // Gris claro
+    // Color base con iluminación aplicada
+    let lit_color = Color {
+        r: 0.8 * intensity,
+        g: 0.8 * intensity,
+        b: 0.8 * intensity,
+    };
 
     // Itera sobre cada píxel en el bounding box
     for y in min_y..=max_y {

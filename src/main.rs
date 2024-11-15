@@ -3,15 +3,13 @@ use crate::vertex::Vertex;
 use crate::color::Color;
 use crate::model::Model3D;
 use crate::triangle::triangle;
-use nalgebra_glm::{Vec3, Mat4};
 use pixels::{Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, MouseScrollDelta, WindowEvent, ElementState, MouseButton};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
+use nalgebra_glm::{Vec3, Mat4, rotate_x, rotate_y};
 
-
-// Asegúrate de importar todos los módulos necesarios
 mod obj;
 mod vertex;
 mod color;
@@ -19,8 +17,7 @@ mod fragment;
 mod line;
 mod triangle;
 mod model;
-
-// Importa Model3D correctamente
+mod utils;
 
 #[derive(Debug)]
 struct Framebuffer {
@@ -28,10 +25,6 @@ struct Framebuffer {
     height: usize,
     buffer: Vec<u32>,
 }
-
-
-// (Continúa con el resto del código)
-
 
 impl Framebuffer {
     fn new(width: usize, height: usize) -> Self {
@@ -55,63 +48,17 @@ impl Framebuffer {
     }
 }
 
-
 pub struct Uniforms {
     pub model_matrix: Mat4,
 }
 
 impl Uniforms {
-    pub fn new(translation: Vec3, scale: f32) -> Self {
-        let model_matrix = Mat4::new(
-            scale, 0.0, 0.0, translation.x,
-            0.0, scale, 0.0, translation.y,
-            0.0, 0.0, scale, translation.z,
-            0.0, 0.0, 0.0, 1.0,
-        );
+    pub fn new(translation: Vec3, scale: f32, rotation: Mat4) -> Self {
+        let model_matrix = Mat4::new_translation(&translation)
+            * rotation
+            * Mat4::new_nonuniform_scaling(&Vec3::new(scale, scale, scale));
         Self { model_matrix }
     }
-}
-
-fn calculate_bounding_box(v1: &Vec3, v2: &Vec3, v3: &Vec3) -> (i32, i32, i32, i32) {
-    let min_x = v1.x.min(v2.x).min(v3.x).floor() as i32;
-    let min_y = v1.y.min(v2.y).min(v3.y).floor() as i32;
-    let max_x = v1.x.max(v2.x).max(v3.x).ceil() as i32;
-    let max_y = v1.y.max(v2.y).max(v3.y).ceil() as i32;
-
-    (min_x, min_y, max_x, max_y)
-}
-
-fn vertex_shader(vertex: &Vertex, uniforms: &Uniforms) -> Vertex {
-    let position = nalgebra_glm::vec4(vertex.position.x, vertex.position.y, vertex.position.z, 1.0);
-    let transformed = uniforms.model_matrix * position;
-    let w = transformed.w;
-    let transformed_position = Vec3::new(transformed.x / w, transformed.y / w, transformed.z / w);
-
-    Vertex {
-        position: vertex.position,
-        color: vertex.color,
-        transformed_position,
-        ..*vertex
-    }
-}
-
-fn barycentric_coordinates(p: &Vec3, a: &Vec3, b: &Vec3, c: &Vec3) -> (f32, f32, f32) {
-    let v0 = b - a;
-    let v1 = c - a;
-    let v2 = p - a;
-
-    let d00 = v0.dot(&v0);
-    let d01 = v0.dot(&v1);
-    let d11 = v1.dot(&v1);
-    let d20 = v2.dot(&v0);
-    let d21 = v2.dot(&v1);
-
-    let denom = d00 * d11 - d01 * d01;
-    let v = (d11 * d20 - d01 * d21) / denom;
-    let w = (d00 * d21 - d01 * d20) / denom;
-    let u = 1.0 - v - w;
-
-    (u, v, w)
 }
 
 fn render(
@@ -122,7 +69,17 @@ fn render(
 ) {
     let transformed_vertices: Vec<Vertex> = vertex_array
         .iter()
-        .map(|vertex| vertex_shader(vertex, uniforms))
+        .map(|vertex| {
+            let position = nalgebra_glm::vec4(vertex.position.x, vertex.position.y, vertex.position.z, 1.0);
+            let transformed = uniforms.model_matrix * position;
+            let transformed_position = Vec3::new(transformed.x, transformed.y, transformed.z);
+            Vertex {
+                position: vertex.position,
+                color: vertex.color,
+                transformed_position,
+                ..*vertex
+            }
+        })
         .collect();
 
     for triangle_vertices in transformed_vertices.chunks(3) {
@@ -140,6 +97,7 @@ fn render(
                 if x < framebuffer.width && y < framebuffer.height {
                     let index = y * framebuffer.width + x;
 
+                    // Verificar y actualizar el z-buffer
                     if fragment.depth < z_buffer[index] {
                         z_buffer[index] = fragment.depth;
                         framebuffer.set_current_color(x, y, fragment.color.to_hex());
@@ -151,11 +109,17 @@ fn render(
 }
 
 
-
-
 fn main() {
+    let mut scale = 1.0;
+    let mut camera_angle_x = 0.0;
+    let mut camera_angle_y = 0.0;
+    let mut is_rotating = false;
+    let mut last_mouse_position = (0.0, 0.0);
+
     let width = 800;
     let height = 600;
+    let half_width = width as f32 / 2.0;
+    let half_height = height as f32 / 2.0;
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -168,26 +132,54 @@ fn main() {
     let mut pixels = Pixels::new(width as u32, height as u32, surface_texture).unwrap();
 
     let mut framebuffer = Framebuffer::new(width, height);
-    framebuffer.clear(Color::black().to_hex());
+    framebuffer.clear(Color { r: 0.0, g: 0.2, b: 0.0 }.to_hex());
+
+    //framebuffer.clear(Color::black().to_hex());
     let mut z_buffer = vec![f32::INFINITY; width * height];
 
-    let obj = Obj::load("assets/nave.obj").expect("Failed to load OBJ file");
+    let obj = Obj::load("assets/naveT.obj").expect("Failed to load OBJ file");
     let mut model = Model3D::new();
     model.add_vertices_from_obj(&obj);
-    println!("Vertices count: {}", model.vertices.len()); // Agregar esta líne
-
-    let uniforms = Uniforms::new(Vec3::new(350.0, 300.0, 0.0), 15.0); // Ajusta la posición y la escala
-    render(&mut framebuffer, &mut z_buffer, &uniforms, &model.vertices);
-    //println!("{:?}", framebuffer.buffer); // Verifica que no esté vacío
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::MouseWheel { delta, .. } => {
+                    if let MouseScrollDelta::LineDelta(_, y) = delta {
+                        scale = (scale + y * 0.1).clamp(0.1, 100.0);
+                    }
+                }
+                WindowEvent::MouseInput { button: MouseButton::Middle, state, .. } => {
+                    is_rotating = state == ElementState::Pressed;
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    let (x, y) = (position.x as f32, position.y as f32);
+                    if is_rotating {
+                        let dx = (x - last_mouse_position.0) * 0.01;
+                        let dy = (y - last_mouse_position.1) * 0.01;
+                        camera_angle_x += dy;
+                        camera_angle_y += dx;
+                    }
+                    last_mouse_position = (x, y);
+                }
+                _ => {}
+            },
             Event::RedrawRequested(_) => {
+                //framebuffer.clear(Color::black().to_hex());
+                framebuffer.clear(Color { r: 0.0, g: 0.2, b: 0.0 }.to_hex());
+
+                z_buffer.iter_mut().for_each(|z| *z = f32::INFINITY);
+
+                let rotation_x = rotate_x(&Mat4::identity(), camera_angle_x);
+                let rotation_y = rotate_y(&Mat4::identity(), camera_angle_y);
+                let camera_transform = rotation_y * rotation_x;
+
+                let uniforms = Uniforms::new(Vec3::new(half_width, half_height, 0.0), scale, camera_transform);
+
+                render(&mut framebuffer, &mut z_buffer, &uniforms, &model.vertices);
+
                 let frame = pixels.get_frame();
                 for (i, pixel) in framebuffer.buffer.iter().enumerate() {
                     let offset = i * 4;

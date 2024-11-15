@@ -1,4 +1,3 @@
-// vertex.rs
 use nalgebra_glm::{Vec2, Vec3};
 use crate::color::Color;
 
@@ -40,7 +39,7 @@ impl Vertex {
     // Método para establecer la posición y la normal transformadas
     pub fn set_transformed(&mut self, position: Vec3, normal: Vec3) {
         self.transformed_position = position;
-        self.transformed_normal = normal;
+        self.transformed_normal = normal.normalize(); // Asegúrate de normalizar la normal
     }
 }
 
